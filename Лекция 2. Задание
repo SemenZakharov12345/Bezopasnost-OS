@@ -1,0 +1,74 @@
+16.  Сделать тестовое приложение на языке Си mysyslog-client, которое использует библиотеку libmysyslog и позволяет в аргументах командной строки задавать выводимый через библиотеку libmysyslog текст, уровень записи журнала, используемый драйвер и формат и путь к файлу. Аргументы командной строки обрабатывать через getopt.
+17.  Сделать тестовое приложение демон mysyslog-daemon, который автоматически запускается во время старта компьютера и постоянно выводит в лог данные с разным уровнем. Приложение настраивается при помощи конфигурационного файла /etc/mysyslog/mysyslog.cfg. В конфигурационном файле задается: путь, формат и драйвер. Демон должен корректно обрабатывать получаемые сигналы и должен запускаться и останавливаться через systemctl.
+#include <stdio.h>
+#include <stdlib.h>
+#include <unistd.h>
+#include <signal.h>
+#include <string.h>
+#include <libmysyslog.h>
+
+#define CONFIG_FILE "/etc/mysyslog/mysyslog.cfg"
+
+static volatile int running = 1;
+
+void handle_signal(int sig) {
+    if (sig == SIGTERM || sig == SIGINT) {
+        running = 0;
+    }
+}
+
+void read_config(const char *config_file, char **driver, char **format, char **path) {
+    FILE *file = fopen(config_file, "r");
+    if (!file) {
+        perror("Failed to open config file");
+        exit(EXIT_FAILURE);
+    }
+
+    size_t len = 0;
+    char *line = NULL;
+    while (getline(&line, &len, file) != -1) {
+        if (strncmp(line, "driver=", 7) == 0) {
+            *driver = strdup(line + 7);
+            (*driver)[strcspn(*driver, "\n")] = '\0'; // Remove newline character
+        } else if (strncmp(line, "format=", 7) == 0) {
+            *format = strdup(line + 7);
+            (*format)[strcspn(*format, "\n")] = '\0'; // Remove newline character
+        } else if (strncmp(line, "path=", 5) == 0) {
+            *path = strdup(line + 5);
+            (*path)[strcspn(*path, "\n")] = '\0'; // Remove newline character
+        }
+    }
+
+    free(line);
+    fclose(file);
+}
+
+int main() {
+    char *driver = NULL;
+    char *format = NULL;
+    char *path = NULL;
+
+    read_config(CONFIG_FILE, &driver, &format, &path);
+
+    if (mysyslog_init(driver, format, path) != 0) {
+        fprintf(stderr, "Failed to initialize mysyslog\n");
+        exit(EXIT_FAILURE);
+    }
+
+    signal(SIGTERM, handle_signal);
+    signal(SIGINT, handle_signal);
+
+    while (running) {
+        mysyslog_log(MYSYSLOG_INFO, "Info level log message");
+        mysyslog_log(MYSYSLOG_WARNING, "Warning level log message");
+        mysyslog_log(MYSYSLOG_ERROR, "Error level log message");
+        sleep(5);
+    }
+
+    mysyslog_close();
+    free(driver);
+    free(format);
+    free(path);
+
+    return 0;
+}
